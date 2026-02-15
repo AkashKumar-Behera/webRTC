@@ -37,22 +37,21 @@ let isCaller = false;
 /* ================= TURN + STUN ================= */
 
 const servers = {
-    iceServers: [
-        {
-            urls: "stun:stun.l.google.com:19302"
-        },
-        {
-            urls: [
-                "turn:82.25.104.130:3478?transport=udp",
-                "turn:82.25.104.130:3478?transport=tcp",
-                "turns:webrtc.croto.in:5349?transport=tcp"
-            ],
-            username: "akash",
-            credential: "123456"
-        }
-    ]
-
+  iceServers: [
+    {
+      urls: "stun:stun.l.google.com:19302"
+    },
+    {
+      urls: [
+        "turn:82.25.104.130:3478?transport=udp",
+        "turn:82.25.104.130:3478?transport=tcp"
+      ],
+      username: "akash",
+      credential: "123456"
+    }
+  ]
 };
+
 
 /* ================= DOM ================= */
 
