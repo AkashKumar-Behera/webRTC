@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>SyncMeet</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: Arial;
+      background: #111;
+      color: white;
+      display: flex;
+      height: 100vh;
+    }
+
+    .video-section {
+      flex: 3;
+      position: relative;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      background: black;
+    }
+
+    video {
+      max-width: 90%;
+      border-radius: 10px;
+    }
+
+    #localVideo {
+      position: absolute;
+      bottom: 20px;
+      right: 20px;
+      width: 200px;
+      border: 2px solid white;
+    }
+
+    .chat-section {
+      flex: 1;
+      background: #1c1c1c;
+      display: flex;
+      flex-direction: column;
+      padding: 10px;
+    }
+
+    #chatBox {
+      flex: 1;
+      overflow-y: auto;
+      margin-bottom: 10px;
+    }
+
+    input, button {
+      padding: 8px;
+      margin: 5px 0;
+      border-radius: 5px;
+      border: none;
+    }
+
+    button {
+      cursor: pointer;
+    }
+
+    .controls {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+    }
+  </style>
+</head>
+<body>
+
+<div class="video-section">
+
+  <div class="controls">
+    <input id="roomId" placeholder="Room ID" />
+    <input id="username" placeholder="Your Name" />
+<div id="remoteName" style="position:absolute; top:20px; left:50%; transform:translateX(-50%); background:#0008; padding:5px 10px; border-radius:5px;"></div>
+
+    <button onclick="generateRoom()">Generate</button>
+    <button onclick="createCall()">Create</button>
+    <button onclick="joinCall()">Join</button>
+    <button onclick="leaveCall()">Leave</button>
+    <button onclick="toggleMute()">Mute</button>
+    <button onclick="toggleCamera()">Camera</button>
+    <button onclick="copyLink()">Copy Link</button>
+  </div>
+
+  <video id="remoteVideo" autoplay playsinline></video>
+  <video id="localVideo" autoplay muted playsinline></video>
+
+</div>
+
+<div class="chat-section">
+  <h3>Chat</h3>
+  <div id="chatBox"></div>
+  <input id="chatInput" placeholder="Type message..." />
+  <button onclick="sendMessage()">Send</button>
+</div>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>
