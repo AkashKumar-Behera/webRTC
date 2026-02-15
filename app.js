@@ -6,7 +6,8 @@ import {
   get,
   onValue,
   push,
-  remove
+  remove,
+  off
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
 
 const firebaseConfig = {
@@ -26,6 +27,8 @@ let localStream;
 let remoteStream;
 let peerConnection;
 let roomId;
+let answerListener;
+let offerListener;
 
 const servers = {
   iceServers: [
@@ -41,18 +44,8 @@ const servers = {
 const localVideo = document.getElementById("localVideo");
 const remoteVideo = document.getElementById("remoteVideo");
 
-async function init() {
-  localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-  remoteStream = new MediaStream();
-
-  localVideo.srcObject = localStream;
-  remoteVideo.srcObject = remoteStream;
-
+async function createPeerConnection() {
   peerConnection = new RTCPeerConnection(servers);
-
-  localStream.getTracks().forEach(track => {
-    peerConnection.addTrack(track, localStream);
-  });
 
   peerConnection.ontrack = event => {
     event.streams[0].getTracks().forEach(track => {
@@ -76,24 +69,30 @@ async function init() {
   };
 }
 
-init();
+async function init() {
+  localStream = await navigator.mediaDevices.getUserMedia({
+    video: true,
+    audio: true
+  });
 
-const urlParams = new URLSearchParams(window.location.search);
-const autoRoom = urlParams.get("room");
-if (autoRoom) {
-  document.getElementById("roomId").value = autoRoom;
+  remoteStream = new MediaStream();
+
+  localVideo.srcObject = localStream;
+  remoteVideo.srcObject = remoteStream;
+
+  await createPeerConnection();
+
+  localStream.getTracks().forEach(track => {
+    peerConnection.addTrack(track, localStream);
+  });
 }
 
-window.generateRoom = () => {
-  document.getElementById("roomId").value =
-    Math.random().toString(36).substring(2, 8);
-};
+init();
+
+/* ================= CREATE CALL ================= */
 
 window.createCall = async () => {
   roomId = document.getElementById("roomId").value;
-  const username = document.getElementById("username").value;
-
-  await set(ref(db, "rooms/" + roomId + "/participants/" + username), true);
 
   const roomRef = ref(db, "rooms/" + roomId);
   const offerCandidates = ref(db, "rooms/" + roomId + "/offerCandidates");
@@ -107,35 +106,48 @@ window.createCall = async () => {
 
   const offer = await peerConnection.createOffer();
   await peerConnection.setLocalDescription(offer);
+
   await set(roomRef, { offer });
 
-  onValue(roomRef, async snapshot => {
-    const data = snapshot.val();
-    if (data?.answer && !peerConnection.currentRemoteDescription) {
-      await peerConnection.setRemoteDescription(
-        new RTCSessionDescription(data.answer)
-      );
-    }
+  // LISTEN FOR ANSWER ONCE
+  const answerRef = ref(db, "rooms/" + roomId + "/answer");
+
+  answerListener = onValue(answerRef, async snapshot => {
+    const answer = snapshot.val();
+    if (!answer) return;
+
+    if (peerConnection.signalingState !== "have-local-offer") return;
+
+    await peerConnection.setRemoteDescription(
+      new RTCSessionDescription(answer)
+    );
+
+    off(answerRef); // REMOVE LISTENER AFTER SET
   });
 
+  // LISTEN FOR ICE
   onValue(answerCandidates, snapshot => {
     snapshot.forEach(child => {
-      peerConnection.addIceCandidate(new RTCIceCandidate(child.val()));
+      peerConnection.addIceCandidate(
+        new RTCIceCandidate(child.val())
+      );
     });
   });
-
-  listenChat();
 };
+
+/* ================= JOIN CALL ================= */
 
 window.joinCall = async () => {
   roomId = document.getElementById("roomId").value;
-  const username = document.getElementById("username").value;
-
-  await set(ref(db, "rooms/" + roomId + "/participants/" + username), true);
 
   const roomRef = ref(db, "rooms/" + roomId);
   const roomSnapshot = await get(roomRef);
   const roomData = roomSnapshot.val();
+
+  if (!roomData) {
+    alert("Room does not exist");
+    return;
+  }
 
   const offerCandidates = ref(db, "rooms/" + roomId + "/offerCandidates");
   const answerCandidates = ref(db, "rooms/" + roomId + "/answerCandidates");
@@ -146,23 +158,29 @@ window.joinCall = async () => {
     }
   };
 
-  await peerConnection.setRemoteDescription(
-    new RTCSessionDescription(roomData.offer)
-  );
+  // SET OFFER ONLY IF STABLE
+  if (peerConnection.signalingState === "stable") {
+    await peerConnection.setRemoteDescription(
+      new RTCSessionDescription(roomData.offer)
+    );
+  }
 
   const answer = await peerConnection.createAnswer();
   await peerConnection.setLocalDescription(answer);
 
   await set(ref(db, "rooms/" + roomId + "/answer"), answer);
 
+  // LISTEN FOR ICE
   onValue(offerCandidates, snapshot => {
     snapshot.forEach(child => {
-      peerConnection.addIceCandidate(new RTCIceCandidate(child.val()));
+      peerConnection.addIceCandidate(
+        new RTCIceCandidate(child.val())
+      );
     });
   });
-
-  listenChat();
 };
+
+/* ================= CHAT ================= */
 
 window.sendMessage = () => {
   const input = document.getElementById("chatInput");
@@ -175,16 +193,19 @@ window.sendMessage = () => {
   input.value = "";
 };
 
-function listenChat() {
+onValue(ref(db, "rooms"), snapshot => {
+  if (!roomId) return;
   const chatRef = ref(db, "rooms/" + roomId + "/chat");
-  onValue(chatRef, snapshot => {
+  onValue(chatRef, snap => {
     const chatBox = document.getElementById("chatBox");
     chatBox.innerHTML = "";
-    snapshot.forEach(child => {
+    snap.forEach(child => {
       chatBox.innerHTML += "<div>" + child.val().message + "</div>";
     });
   });
-}
+});
+
+/* ================= CONTROLS ================= */
 
 window.toggleMute = () => {
   const track = localStream.getAudioTracks()[0];
@@ -199,7 +220,12 @@ window.toggleCamera = () => {
 window.leaveCall = async () => {
   if (peerConnection) peerConnection.close();
   if (localStream) localStream.getTracks().forEach(track => track.stop());
-  await remove(ref(db, "rooms/" + roomId));
+
+  if (roomId) {
+    await remove(ref(db, "rooms/" + roomId + "/offer"));
+    await remove(ref(db, "rooms/" + roomId + "/answer"));
+  }
+
   location.reload();
 };
 
