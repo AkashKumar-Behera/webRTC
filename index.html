@@ -1,7 +1,8 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>SyncMeet</title>
+  <title>SyncMeet Pro</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <style>
     body {
       margin: 0;
@@ -10,6 +11,12 @@
       color: white;
       display: flex;
       height: 100vh;
+      transition: 0.3s;
+    }
+
+    body.light {
+      background: #f2f2f2;
+      color: black;
     }
 
     .video-section {
@@ -42,6 +49,10 @@
       padding: 10px;
     }
 
+    body.light .chat-section {
+      background: #ddd;
+    }
+
     #chatBox {
       flex: 1;
       overflow-y: auto;
@@ -50,7 +61,7 @@
 
     input, button {
       padding: 8px;
-      margin: 5px 0;
+      margin: 4px 0;
       border-radius: 5px;
       border: none;
     }
@@ -63,6 +74,43 @@
       position: absolute;
       top: 10px;
       left: 10px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+    }
+
+    #statusIndicator {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      padding: 5px 10px;
+      border-radius: 5px;
+      background: red;
+    }
+
+    #loader {
+      position: absolute;
+      font-size: 20px;
+      display: none;
+    }
+
+    #remoteName {
+      position: absolute;
+      top: 50px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0,0,0,0.6);
+      padding: 5px 10px;
+      border-radius: 5px;
+    }
+
+    @media (max-width: 768px) {
+      body {
+        flex-direction: column;
+      }
+      #localVideo {
+        width: 120px;
+      }
     }
   </style>
 </head>
@@ -71,18 +119,21 @@
 <div class="video-section">
 
   <div class="controls">
-    <input id="roomId" placeholder="Room ID" />
     <input id="username" placeholder="Your Name" />
-<div id="remoteName" style="position:absolute; top:20px; left:50%; transform:translateX(-50%); background:#0008; padding:5px 10px; border-radius:5px;"></div>
-
+    <input id="roomId" placeholder="Room ID" />
     <button onclick="generateRoom()">Generate</button>
     <button onclick="createCall()">Create</button>
     <button onclick="joinCall()">Join</button>
     <button onclick="leaveCall()">Leave</button>
     <button onclick="toggleMute()">Mute</button>
     <button onclick="toggleCamera()">Camera</button>
+    <button onclick="toggleTheme()">Theme</button>
     <button onclick="copyLink()">Copy Link</button>
   </div>
+
+  <div id="statusIndicator">Connecting...</div>
+  <div id="loader">Connecting...</div>
+  <div id="remoteName"></div>
 
   <video id="remoteVideo" autoplay playsinline></video>
   <video id="localVideo" autoplay muted playsinline></video>

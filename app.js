@@ -5,10 +5,10 @@ import {
   set,
   get,
   onValue,
-  push
+  push,
+  remove
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
 
-// 🔥 YOUR FIREBASE CONFIG
 const firebaseConfig = {
   apiKey: "AIzaSyBGnFw13ko0b4KAs7plpFmHlg0GohowElA",
   authDomain: "webrtc-cd5af.firebaseapp.com",
@@ -29,7 +29,12 @@ let roomId;
 
 const servers = {
   iceServers: [
-    { urls: "stun:stun.l.google.com:19302" }
+    { urls: "stun:stun.l.google.com:19302" },
+    {
+      urls: "turn:openrelay.metered.ca:80",
+      username: "openrelayproject",
+      credential: "openrelayproject"
+    }
   ]
 };
 
@@ -54,18 +59,43 @@ async function init() {
       remoteStream.addTrack(track);
     });
   };
+
+  peerConnection.onconnectionstatechange = () => {
+    const status = document.getElementById("statusIndicator");
+    const loader = document.getElementById("loader");
+
+    if (peerConnection.connectionState === "connected") {
+      status.innerText = "Connected";
+      status.style.background = "green";
+      loader.style.display = "none";
+    } else {
+      status.innerText = "Connecting...";
+      status.style.background = "red";
+      loader.style.display = "block";
+    }
+  };
 }
 
 init();
 
-const username = document.getElementById("username").value;
-await set(ref(db, "rooms/" + roomId + "/participants/" + username), true);
+const urlParams = new URLSearchParams(window.location.search);
+const autoRoom = urlParams.get("room");
+if (autoRoom) {
+  document.getElementById("roomId").value = autoRoom;
+}
 
+window.generateRoom = () => {
+  document.getElementById("roomId").value =
+    Math.random().toString(36).substring(2, 8);
+};
 
 window.createCall = async () => {
   roomId = document.getElementById("roomId").value;
-  const roomRef = ref(db, "rooms/" + roomId);
+  const username = document.getElementById("username").value;
 
+  await set(ref(db, "rooms/" + roomId + "/participants/" + username), true);
+
+  const roomRef = ref(db, "rooms/" + roomId);
   const offerCandidates = ref(db, "rooms/" + roomId + "/offerCandidates");
   const answerCandidates = ref(db, "rooms/" + roomId + "/answerCandidates");
 
@@ -90,9 +120,7 @@ window.createCall = async () => {
 
   onValue(answerCandidates, snapshot => {
     snapshot.forEach(child => {
-      peerConnection.addIceCandidate(
-        new RTCIceCandidate(child.val())
-      );
+      peerConnection.addIceCandidate(new RTCIceCandidate(child.val()));
     });
   });
 
@@ -101,8 +129,11 @@ window.createCall = async () => {
 
 window.joinCall = async () => {
   roomId = document.getElementById("roomId").value;
-  const roomRef = ref(db, "rooms/" + roomId);
+  const username = document.getElementById("username").value;
 
+  await set(ref(db, "rooms/" + roomId + "/participants/" + username), true);
+
+  const roomRef = ref(db, "rooms/" + roomId);
   const roomSnapshot = await get(roomRef);
   const roomData = roomSnapshot.val();
 
@@ -126,9 +157,7 @@ window.joinCall = async () => {
 
   onValue(offerCandidates, snapshot => {
     snapshot.forEach(child => {
-      peerConnection.addIceCandidate(
-        new RTCIceCandidate(child.val())
-      );
+      peerConnection.addIceCandidate(new RTCIceCandidate(child.val()));
     });
   });
 
@@ -137,11 +166,10 @@ window.joinCall = async () => {
 
 window.sendMessage = () => {
   const input = document.getElementById("chatInput");
-  const message = input.value;
-  if (!message) return;
+  if (!input.value) return;
 
   push(ref(db, "rooms/" + roomId + "/chat"), {
-    message
+    message: input.value
   });
 
   input.value = "";
@@ -158,18 +186,6 @@ function listenChat() {
   });
 }
 
-window.generateRoom = () => {
-  const randomId = Math.random().toString(36).substring(2, 8);
-  document.getElementById("roomId").value = randomId;
-};
-
-window.copyLink = () => {
-  const id = document.getElementById("roomId").value;
-  const link = window.location.origin + "?room=" + id;
-  navigator.clipboard.writeText(link);
-  alert("Link Copied!");
-};
-
 window.toggleMute = () => {
   const track = localStream.getAudioTracks()[0];
   track.enabled = !track.enabled;
@@ -180,12 +196,19 @@ window.toggleCamera = () => {
   track.enabled = !track.enabled;
 };
 
-window.leaveCall = () => {
+window.leaveCall = async () => {
   if (peerConnection) peerConnection.close();
-  if (localStream) {
-    localStream.getTracks().forEach(track => track.stop());
-  }
-  remoteVideo.srcObject = null;
-  localVideo.srcObject = null;
+  if (localStream) localStream.getTracks().forEach(track => track.stop());
+  await remove(ref(db, "rooms/" + roomId));
   location.reload();
+};
+
+window.toggleTheme = () => {
+  document.body.classList.toggle("light");
+};
+
+window.copyLink = () => {
+  const link = window.location.origin + "?room=" + roomId;
+  navigator.clipboard.writeText(link);
+  alert("Link Copied!");
 };
