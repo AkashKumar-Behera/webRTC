@@ -4,11 +4,14 @@ import {
   ref,
   set,
   get,
+  onChildAdded,
   onValue,
   push,
   remove,
   off
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+
+/* ================= FIREBASE ================= */
 
 const firebaseConfig = {
   apiKey: "AIzaSyBGnFw13ko0b4KAs7plpFmHlg0GohowElA",
@@ -23,53 +26,35 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const db = getDatabase(app);
 
+/* ================= GLOBALS ================= */
+
 let localStream;
 let remoteStream;
-let peerConnection;
+let pc;
 let roomId;
-let answerListener;
-let offerListener;
+let isCaller = false;
+
+/* ================= TURN + STUN ================= */
 
 const servers = {
   iceServers: [
     { urls: "stun:stun.l.google.com:19302" },
     {
-      urls: "turn:openrelay.metered.ca:80",
-      username: "openrelayproject",
-      credential: "openrelayproject"
+      urls: "turn:82.25.104.130:3478",
+      username: "webrtcuser",
+      credential: "webrtcpass"
     }
   ]
 };
 
+/* ================= DOM ================= */
+
 const localVideo = document.getElementById("localVideo");
 const remoteVideo = document.getElementById("remoteVideo");
 
-async function createPeerConnection() {
-  peerConnection = new RTCPeerConnection(servers);
+/* ================= INIT ================= */
 
-  peerConnection.ontrack = event => {
-    event.streams[0].getTracks().forEach(track => {
-      remoteStream.addTrack(track);
-    });
-  };
-
-  peerConnection.onconnectionstatechange = () => {
-    const status = document.getElementById("statusIndicator");
-    const loader = document.getElementById("loader");
-
-    if (peerConnection.connectionState === "connected") {
-      status.innerText = "Connected";
-      status.style.background = "green";
-      loader.style.display = "none";
-    } else {
-      status.innerText = "Connecting...";
-      status.style.background = "red";
-      loader.style.display = "block";
-    }
-  };
-}
-
-async function init() {
+async function initMedia() {
   localStream = await navigator.mediaDevices.getUserMedia({
     video: true,
     audio: true
@@ -79,133 +64,145 @@ async function init() {
 
   localVideo.srcObject = localStream;
   remoteVideo.srcObject = remoteStream;
-
-  await createPeerConnection();
-
-  localStream.getTracks().forEach(track => {
-    peerConnection.addTrack(track, localStream);
-  });
 }
 
-init();
+function createPeerConnection() {
+  pc = new RTCPeerConnection(servers);
 
-/* ================= CREATE CALL ================= */
+  localStream.getTracks().forEach(track => {
+    pc.addTrack(track, localStream);
+  });
+
+  pc.ontrack = e => {
+    e.streams[0].getTracks().forEach(track => {
+      remoteStream.addTrack(track);
+    });
+  };
+
+  pc.onconnectionstatechange = () => {
+    console.log("Connection:", pc.connectionState);
+  };
+}
+
+/* ================= CREATE ================= */
 
 window.createCall = async () => {
   roomId = document.getElementById("roomId").value;
+  if (!roomId) return alert("Enter Room ID");
+
+  isCaller = true;
+
+  createPeerConnection();
 
   const roomRef = ref(db, "rooms/" + roomId);
   const offerCandidates = ref(db, "rooms/" + roomId + "/offerCandidates");
   const answerCandidates = ref(db, "rooms/" + roomId + "/answerCandidates");
 
-  peerConnection.onicecandidate = event => {
-    if (event.candidate) {
-      push(offerCandidates, event.candidate.toJSON());
+  pc.onicecandidate = e => {
+    if (e.candidate) {
+      push(offerCandidates, e.candidate.toJSON());
     }
   };
 
-  const offer = await peerConnection.createOffer();
-  await peerConnection.setLocalDescription(offer);
+  const offer = await pc.createOffer();
+  await pc.setLocalDescription(offer);
 
   await set(roomRef, { offer });
 
-  // LISTEN FOR ANSWER ONCE
-  const answerRef = ref(db, "rooms/" + roomId + "/answer");
+  /* WAIT FOR ANSWER */
+  onValue(ref(db, "rooms/" + roomId + "/answer"), async snapshot => {
+    const data = snapshot.val();
+    if (!data) return;
 
-  answerListener = onValue(answerRef, async snapshot => {
-    const answer = snapshot.val();
-    if (!answer) return;
-
-    if (peerConnection.signalingState !== "have-local-offer") return;
-
-    await peerConnection.setRemoteDescription(
-      new RTCSessionDescription(answer)
-    );
-
-    off(answerRef); // REMOVE LISTENER AFTER SET
+    if (pc.signalingState === "have-local-offer") {
+      await pc.setRemoteDescription(new RTCSessionDescription(data));
+    }
   });
 
-  // LISTEN FOR ICE
-  onValue(answerCandidates, snapshot => {
-    snapshot.forEach(child => {
-      peerConnection.addIceCandidate(
-        new RTCIceCandidate(child.val())
-      );
-    });
+  /* ICE */
+  onChildAdded(answerCandidates, snapshot => {
+    const candidate = snapshot.val();
+    if (candidate) {
+      pc.addIceCandidate(new RTCIceCandidate(candidate));
+    }
   });
 };
 
-/* ================= JOIN CALL ================= */
+/* ================= JOIN ================= */
 
 window.joinCall = async () => {
   roomId = document.getElementById("roomId").value;
+  if (!roomId) return alert("Enter Room ID");
+
+  isCaller = false;
 
   const roomRef = ref(db, "rooms/" + roomId);
   const roomSnapshot = await get(roomRef);
-  const roomData = roomSnapshot.val();
 
-  if (!roomData) {
-    alert("Room does not exist");
-    return;
+  if (!roomSnapshot.exists()) {
+    return alert("Room not found");
   }
+
+  createPeerConnection();
 
   const offerCandidates = ref(db, "rooms/" + roomId + "/offerCandidates");
   const answerCandidates = ref(db, "rooms/" + roomId + "/answerCandidates");
 
-  peerConnection.onicecandidate = event => {
-    if (event.candidate) {
-      push(answerCandidates, event.candidate.toJSON());
+  pc.onicecandidate = e => {
+    if (e.candidate) {
+      push(answerCandidates, e.candidate.toJSON());
     }
   };
 
-  // SET OFFER ONLY IF STABLE
-  if (peerConnection.signalingState === "stable") {
-    await peerConnection.setRemoteDescription(
-      new RTCSessionDescription(roomData.offer)
-    );
-  }
+  const offer = roomSnapshot.val().offer;
+  await pc.setRemoteDescription(new RTCSessionDescription(offer));
 
-  const answer = await peerConnection.createAnswer();
-  await peerConnection.setLocalDescription(answer);
+  const answer = await pc.createAnswer();
+  await pc.setLocalDescription(answer);
 
   await set(ref(db, "rooms/" + roomId + "/answer"), answer);
 
-  // LISTEN FOR ICE
-  onValue(offerCandidates, snapshot => {
-    snapshot.forEach(child => {
-      peerConnection.addIceCandidate(
-        new RTCIceCandidate(child.val())
-      );
-    });
+  onChildAdded(offerCandidates, snapshot => {
+    const candidate = snapshot.val();
+    if (candidate) {
+      pc.addIceCandidate(new RTCIceCandidate(candidate));
+    }
   });
 };
 
 /* ================= CHAT ================= */
 
-window.sendMessage = () => {
+window.sendMessage = async () => {
   const input = document.getElementById("chatInput");
-  if (!input.value) return;
+  if (!input.value || !roomId) return;
 
-  push(ref(db, "rooms/" + roomId + "/chat"), {
+  await push(ref(db, "rooms/" + roomId + "/chat"), {
     message: input.value
   });
 
   input.value = "";
 };
 
-onValue(ref(db, "rooms"), snapshot => {
-  if (!roomId) return;
-  const chatRef = ref(db, "rooms/" + roomId + "/chat");
-  onValue(chatRef, snap => {
+function listenChat() {
+  onChildAdded(ref(db, "rooms/" + roomId + "/chat"), snapshot => {
     const chatBox = document.getElementById("chatBox");
-    chatBox.innerHTML = "";
-    snap.forEach(child => {
-      chatBox.innerHTML += "<div>" + child.val().message + "</div>";
-    });
+    const msg = snapshot.val().message;
+    chatBox.innerHTML += `<div>${msg}</div>`;
   });
-});
+}
 
 /* ================= CONTROLS ================= */
+
+window.leaveCall = async () => {
+  if (pc) pc.close();
+  if (localStream) localStream.getTracks().forEach(t => t.stop());
+
+  if (roomId && isCaller) {
+    await remove(ref(db, "rooms/" + roomId));
+  }
+
+  location.reload();
+};
 
 window.toggleMute = () => {
   const track = localStream.getAudioTracks()[0];
@@ -217,24 +214,6 @@ window.toggleCamera = () => {
   track.enabled = !track.enabled;
 };
 
-window.leaveCall = async () => {
-  if (peerConnection) peerConnection.close();
-  if (localStream) localStream.getTracks().forEach(track => track.stop());
+/* ================= START ================= */
 
-  if (roomId) {
-    await remove(ref(db, "rooms/" + roomId + "/offer"));
-    await remove(ref(db, "rooms/" + roomId + "/answer"));
-  }
-
-  location.reload();
-};
-
-window.toggleTheme = () => {
-  document.body.classList.toggle("light");
-};
-
-window.copyLink = () => {
-  const link = window.location.origin + "?room=" + roomId;
-  navigator.clipboard.writeText(link);
-  alert("Link Copied!");
-};
+initMedia();
